@@ -48,6 +48,45 @@ async function testConnection(authManager: AuthManager): Promise<void> {
   }
 }
 
+async function setThinkingEffort(): Promise<void> {
+  const config = vscode.workspace.getConfiguration('glm-chat-provider');
+  const current = config.get<string>('defaultThinkingMode', 'auto');
+
+  const items = [
+    {
+      label: 'Auto',
+      description: 'Let the model decide when to think',
+      value: 'auto',
+      picked: current === 'auto',
+    },
+    {
+      label: 'Enabled',
+      description: 'Always enable thinking mode',
+      value: 'enabled',
+      picked: current === 'enabled',
+    },
+    {
+      label: 'Disabled',
+      description: 'Always disable thinking mode',
+      value: 'disabled',
+      picked: current === 'disabled',
+    },
+  ];
+
+  const choice = await vscode.window.showQuickPick(items, {
+    placeHolder: 'Select thinking effort for GLM models',
+  });
+
+  if (!choice) {
+    return;
+  }
+
+  await config.update('defaultThinkingMode', choice.value, true);
+  vscode.window.showInformationMessage(
+    `GLM thinking effort set to ${choice.label}`,
+  );
+}
+
 export function activate(context: vscode.ExtensionContext): void {
   const authManager = new AuthManager(context.secrets);
   const provider = new GlmChatProvider(authManager);
@@ -82,6 +121,12 @@ export function activate(context: vscode.ExtensionContext): void {
       }
       await action();
     }),
+    vscode.commands.registerCommand(
+      'glm-chat-provider.setThinkingEffort',
+      async () => {
+        await setThinkingEffort();
+      },
+    ),
   );
 }
 

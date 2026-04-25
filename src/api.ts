@@ -43,6 +43,7 @@ export interface ChatOptions {
   maxTokens?: number;
   tools?: GlmTool[];
   stop?: string[];
+  thinking?: {type: 'enabled' | 'disabled'};
 }
 
 export class GlmApiError extends Error {
@@ -135,6 +136,10 @@ export class GlmApiClient {
     }
     if (options?.stop?.length) {
       params.stop = options.stop;
+    }
+    if (options?.thinking) {
+      (params as unknown as Record<string, unknown>).thinking =
+        options.thinking;
     }
 
     const tools = this.toOpenAiTools(options?.tools);

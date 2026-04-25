@@ -2,7 +2,7 @@
   "name": "glm-chat-provider",
   "displayName": "GLM Chat Provider",
   "description": "Z.AI GLM models as VS Code Language Model Chat Provider",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "publisher": "DenizhanDaklr",
   "license": "MIT",
   "icon": "images/icon.png",
@@ -11,7 +11,7 @@
     "url": "https://github.com/zelosleone/glm-chat-provider"
   },
   "engines": {
-    "vscode": "^1.108.0"
+    "vscode": "^1.116.0"
   },
   "categories": [
     "AI",
@@ -48,6 +48,26 @@
         }
       }
     ],
+    "configuration": {
+      "title": "GLM Chat Provider",
+      "properties": {
+        "glm-chat-provider.defaultThinkingMode": {
+          "type": "string",
+          "default": "auto",
+          "enum": [
+            "auto",
+            "enabled",
+            "disabled"
+          ],
+          "enumDescriptions": [
+            "Let the model decide when to think (default behavior)",
+            "Always enable thinking mode",
+            "Always disable thinking mode"
+          ],
+          "description": "Default thinking mode for GLM models that support it (GLM-4.5+)"
+        }
+      }
+    },
     "commands": [
       {
         "command": "glm-chat-provider.setApiKey",
@@ -60,6 +80,10 @@
       {
         "command": "glm-chat-provider.manage",
         "title": "GLM: Manage Provider"
+      },
+      {
+        "command": "glm-chat-provider.setThinkingEffort",
+        "title": "GLM: Set Thinking Effort"
       }
     ]
   },
@@ -77,13 +101,13 @@
   },
   "devDependencies": {
     "@types/node": "^22.7.5",
-    "@types/vscode": "1.108.1",
+    "@types/vscode": "1.116.0",
     "eslint": "9.39.2",
     "gts": "^7.0.0",
     "typescript": "^5.6.3"
   },
   "dependencies": {
-    "openai": "^6.21.0",
+    "openai": "^6.34.0",
     "secure-json-parse": "^4.1.0",
     "ts-pattern": "^5.9.0"
   }
