@@ -53,14 +53,6 @@ const TYPED_MODELS: vscode.LanguageModelChatInformation[] = GLM_MODELS.map(
   m => ({...m}),
 );
 
-function getPartialSuffixLength(buffer: string, marker: string): number {
-  for (let i = Math.min(buffer.length, marker.length - 1); i > 0; i--) {
-    if (buffer.endsWith(marker.slice(0, i))) {
-      return i;
-    }
-  }
-  return 0;
-}
 
 function parseToolArguments(argumentsText: string): Record<string, unknown> {
   const parsed = secureJsonParse.safeParse(argumentsText || '{}');
@@ -87,28 +79,28 @@ function processThinkingContent(
   let buffer = state.buffer + content;
   let insideThinking = state.insideThinking;
 
-  while (buffer.length > 0) {
+  while (true) {
     const marker = insideThinking ? THINK_CLOSE : THINK_OPEN;
     const markerIndex = buffer.indexOf(marker);
-    if (markerIndex >= 0) {
-      output += appendThinkingSegment(
-        buffer.slice(0, markerIndex),
-        insideThinking,
-      );
-      buffer = buffer.slice(markerIndex + marker.length);
-      insideThinking = !insideThinking;
-      continue;
+
+    if (markerIndex === -1) {
+      const suffixLength = Math.min(buffer.length, marker.length - 1);
+      if (suffixLength > 0) {
+        output += buffer.slice(0, -suffixLength);
+        buffer = buffer.slice(-suffixLength);
+      } else {
+        output += buffer;
+        buffer = '';
+      }
+      break;
     }
 
-    const partialSuffixLength = getPartialSuffixLength(buffer, marker);
-    if (partialSuffixLength === 0) {
-      output += buffer;
-      buffer = '';
-      continue;
-    }
-
-    output += buffer.slice(0, -partialSuffixLength);
-    buffer = buffer.slice(-partialSuffixLength);
+    output += appendThinkingSegment(
+      buffer.slice(0, markerIndex),
+      insideThinking,
+    );
+    buffer = buffer.slice(markerIndex + marker.length);
+    insideThinking = !insideThinking;
   }
 
   return {output, state: {buffer, insideThinking}};

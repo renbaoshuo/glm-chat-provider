@@ -6,3 +6,8 @@ tsconfig.json
 eslint.config.mjs
 **/*.map
 **/*.ts
+node_modules/**
+out/**
+!out/extension.js
+bundle.js
+
