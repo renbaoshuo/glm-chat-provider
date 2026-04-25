@@ -35,14 +35,17 @@ type ThinkingState = {
   insideThinking: boolean;
 };
 
-type PrepareOptionsWithConfiguration =
-  vscode.PrepareLanguageModelChatModelOptions & {
-    configuration?: Record<string, unknown>;
-  };
-
 type ModelWithApiKey = vscode.LanguageModelChatInformation & {
   __glmApiKey?: string;
 };
+
+type PrepareLanguageModelChatInfoOptions =
+  vscode.PrepareLanguageModelChatModelOptions & {
+    readonly configuration?: {
+      readonly apiKey?: string;
+      readonly [key: string]: unknown;
+    };
+  };
 
 const THINK_OPEN = '<think>';
 const THINK_CLOSE = '</think>';
@@ -52,7 +55,6 @@ const THINK_CLOSE_MARKDOWN = '\n\n</details>\n\n';
 const TYPED_MODELS: vscode.LanguageModelChatInformation[] = GLM_MODELS.map(
   m => ({...m}),
 );
-
 
 function parseToolArguments(argumentsText: string): Record<string, unknown> {
   const parsed = secureJsonParse.safeParse(argumentsText || '{}');
@@ -76,89 +78,79 @@ function processThinkingContent(
   state: ThinkingState,
 ): {output: string; state: ThinkingState} {
   let output = '';
-  let buffer = state.buffer + content;
-  let insideThinking = state.insideThinking;
+  const buffer = state.buffer ? state.buffer + content : content;
+  const insideThinking = state.insideThinking;
 
   while (true) {
     const marker = insideThinking ? THINK_CLOSE : THINK_OPEN;
     const markerIndex = buffer.indexOf(marker);
 
-    if (markerIndex === -1) {
-      const suffixLength = Math.min(buffer.length, marker.length - 1);
-      if (suffixLength > 0) {
-        output += buffer.slice(0, -suffixLength);
-        buffer = buffer.slice(-suffixLength);
-      } else {
-        output += buffer;
-        buffer = '';
+    if (markerIndex >= 0) {
+      output += appendThinkingSegment(
+        buffer.slice(0, markerIndex),
+        insideThinking,
+      );
+      const remaining = buffer.slice(markerIndex + marker.length);
+      if (!remaining) {
+        return {output, state: {buffer: '', insideThinking: !insideThinking}};
       }
-      break;
+      return processThinkingContent(remaining, {
+        buffer: output,
+        insideThinking: !insideThinking,
+      });
     }
 
-    output += appendThinkingSegment(
-      buffer.slice(0, markerIndex),
-      insideThinking,
-    );
-    buffer = buffer.slice(markerIndex + marker.length);
-    insideThinking = !insideThinking;
-  }
+    const maxKeep = Math.min(buffer.length, marker.length - 1);
+    let keep = 0;
+    for (let i = maxKeep; i > 0; i--) {
+      if (marker.startsWith(buffer.slice(buffer.length - i))) {
+        keep = i;
+        break;
+      }
+    }
 
-  return {output, state: {buffer, insideThinking}};
+    output += buffer.slice(0, buffer.length - keep);
+    return {
+      output,
+      state: {
+        buffer: buffer.slice(buffer.length - keep) || '',
+        insideThinking,
+      },
+    };
+  }
 }
 
 export class GlmChatProvider implements vscode.LanguageModelChatProvider {
+  private readonly _onDidChangeLanguageModelChatInformation =
+    new vscode.EventEmitter<void>();
+
+  readonly onDidChangeLanguageModelChatInformation =
+    this._onDidChangeLanguageModelChatInformation.event;
+
   constructor(private readonly authManager: AuthManager) {}
 
+  fireLanguageModelChatInformationChange(): void {
+    this._onDidChangeLanguageModelChatInformation.fire();
+  }
+
   async provideLanguageModelChatInformation(
-    options: vscode.PrepareLanguageModelChatModelOptions,
+    options: PrepareLanguageModelChatInfoOptions,
     token: vscode.CancellationToken,
   ): Promise<vscode.LanguageModelChatInformation[]> {
     void token;
-    const optionsWithConfig = options as PrepareOptionsWithConfiguration;
-
-    const configuredApiKey = this.extractConfiguredApiKey(optionsWithConfig);
-    if (configuredApiKey) {
-      return this.modelsWithApiKey(configuredApiKey);
-    }
-
-    const supportsProviderConfiguration = Object.prototype.hasOwnProperty.call(
-      optionsWithConfig,
-      'configuration',
-    );
-
-    // With provider configuration enabled, the ungrouped call should not
-    // contribute models. Otherwise each configured group duplicates models.
-    if (supportsProviderConfiguration) {
+    if (options.configuration === undefined) {
       return [];
     }
 
-    if (options.silent) {
+    const raw = options.configuration.apiKey;
+    const apiKey =
+      typeof raw === 'string' && raw.trim().length > 0 ? raw.trim() : undefined;
+
+    if (!apiKey) {
       return [];
     }
 
-    const legacyApiKey = await this.authManager.getApiKey();
-    if (!legacyApiKey) {
-      return [];
-    }
-
-    return this.modelsWithApiKey(legacyApiKey);
-  }
-
-  private extractConfiguredApiKey(
-    options: PrepareOptionsWithConfiguration,
-  ): string | undefined {
-    const config = options.configuration;
-    if (!config || typeof config !== 'object') {
-      return undefined;
-    }
-
-    const apiKey = config.apiKey;
-    if (typeof apiKey !== 'string') {
-      return undefined;
-    }
-
-    const normalized = apiKey.trim();
-    return normalized.length > 0 ? normalized : undefined;
+    return this.modelsWithApiKey(apiKey);
   }
 
   private modelsWithApiKey(

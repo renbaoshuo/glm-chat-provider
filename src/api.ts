@@ -57,12 +57,38 @@ export class GlmApiError extends Error {
   }
 }
 
+/**
+ * openai/undici send header values as ByteString; code points must be 0-255.
+ * Invisible or wrong-script characters pasted into an API key cause:
+ * "Cannot convert argument to a ByteString because the character at index …".
+ */
+function prepareApiKeyForOpenAIClient(apiKey: string): string {
+  const cleaned = apiKey
+    .replace(/[\u200B-\u200D\ufeff\u00A0]/g, '')
+    .trim();
+  let utf16Index = 0;
+  for (const ch of cleaned) {
+    const cp = ch.codePointAt(0) ?? 0;
+    if (cp > 255) {
+      throw new GlmApiError(
+        `API key must be plain ASCII. Invalid character at index ${utf16Index} (Unicode U+${cp.toString(16).toUpperCase()}). Re-copy the key from the Z.AI console without extra symbols.`,
+        400,
+      );
+    }
+    utf16Index += ch.length;
+  }
+  if (!cleaned) {
+    throw new GlmApiError('API key is empty after trimming.', 400);
+  }
+  return cleaned;
+}
+
 export class GlmApiClient {
   private readonly client: OpenAI;
 
   constructor(apiKey: string) {
     this.client = new OpenAI({
-      apiKey,
+      apiKey: prepareApiKeyForOpenAIClient(apiKey),
       baseURL: BASE_URL,
     });
   }

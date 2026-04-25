@@ -4,24 +4,35 @@ import {GlmApiClient, GlmApiError} from './api';
 import {AuthManager} from './auth';
 import {GlmChatProvider} from './provider';
 
-async function setApiKey(authManager: AuthManager): Promise<void> {
+async function setApiKey(
+  authManager: AuthManager,
+  provider: GlmChatProvider,
+): Promise<void> {
   await authManager.promptForApiKey();
+  provider.fireLanguageModelChatInformationChange();
 }
 
-async function clearApiKey(authManager: AuthManager): Promise<void> {
+async function clearApiKey(
+  authManager: AuthManager,
+  provider: GlmChatProvider,
+): Promise<void> {
   await authManager.deleteApiKey();
+  provider.fireLanguageModelChatInformationChange();
   vscode.window.showInformationMessage('GLM API key cleared');
 }
 
-async function testConnection(authManager: AuthManager): Promise<void> {
+async function testConnection(
+  authManager: AuthManager,
+  provider: GlmChatProvider,
+): Promise<void> {
   const key = await authManager.getApiKey();
   if (!key) {
     const shouldSetKey = await vscode.window.showInformationMessage(
-      'API key is not set. Would you like to set it now?',
+      'No API key in extension storage. Use "GLM: Set API Key" first, then run this test again.',
       'Set API Key',
     );
     if (shouldSetKey === 'Set API Key') {
-      await authManager.promptForApiKey();
+      await setApiKey(authManager, provider);
     }
     return;
   }
@@ -92,20 +103,23 @@ export function activate(context: vscode.ExtensionContext): void {
   const provider = new GlmChatProvider(authManager);
 
   const manageActions: Record<string, () => Promise<void>> = {
-    'Set API Key': () => setApiKey(authManager),
-    'Clear API Key': () => clearApiKey(authManager),
-    'Test Connection': () => testConnection(authManager),
+    'Set API Key': () => setApiKey(authManager, provider),
+    'Clear API Key': () => clearApiKey(authManager, provider),
+    'Test Connection': () => testConnection(authManager, provider),
   };
 
   context.subscriptions.push(
     vscode.lm.registerLanguageModelChatProvider('zai', provider),
-    vscode.commands.registerCommand('glm-chat-provider.setApiKey', async () => {
-      await setApiKey(authManager);
-    }),
+    vscode.commands.registerCommand(
+      'glm-chat-provider.setApiKey',
+      async () => {
+        await setApiKey(authManager, provider);
+      },
+    ),
     vscode.commands.registerCommand(
       'glm-chat-provider.clearApiKey',
       async () => {
-        await clearApiKey(authManager);
+        await clearApiKey(authManager, provider);
       },
     ),
     vscode.commands.registerCommand('glm-chat-provider.manage', async () => {

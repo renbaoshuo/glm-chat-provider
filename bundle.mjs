@@ -17,6 +17,7 @@ async function runBuild() {
       sourcemap: true,
       platform: 'node',
       target: 'node20',
+      format: 'cjs',
       outfile: outFile,
       external: ['vscode'],
     });

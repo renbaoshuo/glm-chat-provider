@@ -1,9 +1,8 @@
 {
   "name": "glm-chat-provider",
-  "type": "module",
   "displayName": "GLM Chat Provider",
   "description": "Z.AI GLM models as VS Code Language Model Chat Provider",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "publisher": "DenizhanDaklr",
   "license": "MIT",
   "icon": "images/icon.png",
@@ -27,7 +26,8 @@
   ],
   "main": "./out/extension.js",
   "activationEvents": [
-    "onStartupFinished"
+    "onStartupFinished",
+    "onLanguageModelChatProvider:zai"
   ],
   "contributes": {
     "languageModelChatProviders": [
@@ -35,12 +35,13 @@
         "vendor": "zai",
         "displayName": "Z.AI GLM",
         "configuration": {
+          "type": "object",
           "properties": {
             "apiKey": {
               "type": "string",
               "secret": true,
               "title": "API Key",
-              "description": "API key for Z.AI GLM"
+              "description": "API key for Z.AI GLM (from z.ai console)"
             }
           },
           "required": [
@@ -91,7 +92,7 @@
   "scripts": {
     "vscode:prepublish": "npm run bundle",
     "build": "npm run bundle",
-    "bundle": "node bundle.js",
+    "bundle": "node bundle.mjs",
     "compile": "tsc",
     "watch": "tsc -watch -p ./",
     "lint": "gts lint",
