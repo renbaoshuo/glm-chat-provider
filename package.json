@@ -2,7 +2,7 @@
   "name": "glm-chat-provider",
   "displayName": "GLM Chat Provider",
   "description": "Z.AI GLM models as VS Code Language Model Chat Provider",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "publisher": "DenizhanDaklr",
   "license": "MIT",
   "icon": "images/icon.png",
@@ -25,6 +25,9 @@
     "copilot"
   ],
   "main": "./out/extension.js",
+  "extensionKind": [
+    "ui"
+  ],
   "activationEvents": [
     "onStartupFinished",
     "onLanguageModelChatProvider:zai"
@@ -114,5 +117,8 @@
     "openai": "^6.34.0",
     "secure-json-parse": "^4.1.0",
     "ts-pattern": "^5.9.0"
+  },
+  "overrides": {
+    "tmp": "0.2.5"
   }
 }

@@ -110,12 +110,9 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     vscode.lm.registerLanguageModelChatProvider('zai', provider),
-    vscode.commands.registerCommand(
-      'glm-chat-provider.setApiKey',
-      async () => {
-        await setApiKey(authManager, provider);
-      },
-    ),
+    vscode.commands.registerCommand('glm-chat-provider.setApiKey', async () => {
+      await setApiKey(authManager, provider);
+    }),
     vscode.commands.registerCommand(
       'glm-chat-provider.clearApiKey',
       async () => {

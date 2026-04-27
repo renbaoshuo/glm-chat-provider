@@ -63,9 +63,7 @@ export class GlmApiError extends Error {
  * "Cannot convert argument to a ByteString because the character at index …".
  */
 function prepareApiKeyForOpenAIClient(apiKey: string): string {
-  const cleaned = apiKey
-    .replace(/[\u200B-\u200D\ufeff\u00A0]/g, '')
-    .trim();
+  const cleaned = apiKey.replace(/[\u200B-\u200D\ufeff\u00A0]/g, '').trim();
   let utf16Index = 0;
   for (const ch of cleaned) {
     const cp = ch.codePointAt(0) ?? 0;
