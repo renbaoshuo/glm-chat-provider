@@ -1,39 +1,24 @@
 import * as vscode from 'vscode';
-import secureJsonParse from 'secure-json-parse';
-import {P, match} from 'ts-pattern';
+import {match} from 'ts-pattern';
 import {
   GlmApiClient,
   GlmApiError,
-  type GlmMessage,
   type GlmTool,
-  type GlmToolCall,
-} from './api';
+} from '../api';
 import type {ChatCompletionChunk} from 'openai/resources/chat/completions/completions';
-import type {AuthManager} from './auth';
-import {GLM_MODELS} from './models';
+import type {AuthManager} from '../auth';
+import {
+  GLM_MODEL_DEFINITIONS,
+  GLM_MODELS,
+  getModelConfigurationSchema,
+  type GlmModelDefinition,
+  type ModelConfigurationOptions,
+  type ModelPickerChatInformation,
+} from '../models';
 export {GLM_MODELS};
-
-type ToolCallBuilder = {
-  id: string;
-  name: string;
-  arguments: string;
-};
-
-type ToolResult = {
-  callId: string;
-  content: string;
-};
-
-type MessageAccumulator = {
-  text: string;
-  toolCalls: GlmToolCall[];
-  toolResult?: ToolResult;
-};
-
-type ThinkingState = {
-  buffer: string;
-  insideThinking: boolean;
-};
+import {createThinkingPart} from './thinking';
+import {convertMessages, convertTools, parseToolArguments, type ToolCallBuilder} from './convert';
+import {getConfiguredTemperature} from './temperature';
 
 type ModelWithApiKey = vscode.LanguageModelChatInformation & {
   __glmApiKey?: string;
@@ -47,78 +32,37 @@ type PrepareLanguageModelChatInfoOptions =
     };
   };
 
-const THINK_OPEN = '<think>';
-const THINK_CLOSE = '</think>';
-const THINK_OPEN_MARKDOWN = '<details><summary>Thinking</summary>\n\n';
-const THINK_CLOSE_MARKDOWN = '\n\n</details>\n\n';
+function toChatInfo(m: GlmModelDefinition): ModelPickerChatInformation {
+  return {
+    id: m.id,
+    name: m.name,
+    family: m.family,
+    version: m.version,
+    detail: m.detail,
+    tooltip: 'Z.AI',
+    maxInputTokens: m.maxInputTokens,
+    maxOutputTokens: m.maxOutputTokens,
+    isUserSelectable: true,
+    capabilities: {
+      toolCalling: m.capabilities.toolCalling,
+      imageInput: m.capabilities.imageInput,
+    },
+    ...(m.capabilities.thinking
+      ? {configurationSchema: getModelConfigurationSchema(m.thinkingSupport)}
+      : {}),
+  };
+}
 
-const TYPED_MODELS: vscode.LanguageModelChatInformation[] = GLM_MODELS.map(
-  m => ({...m}),
+const TYPED_MODELS: ModelPickerChatInformation[] = GLM_MODEL_DEFINITIONS.map(
+  m => toChatInfo(m),
 );
 
-function parseToolArguments(argumentsText: string): Record<string, unknown> {
-  const parsed = secureJsonParse.safeParse(argumentsText || '{}');
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    return {};
-  }
-  return parsed as Record<string, unknown>;
-}
-
-function appendThinkingSegment(
-  segment: string,
-  insideThinking: boolean,
-): string {
-  return insideThinking
-    ? `${segment}${THINK_CLOSE_MARKDOWN}`
-    : `${segment}${THINK_OPEN_MARKDOWN}`;
-}
-
-function processThinkingContent(
-  content: string,
-  state: ThinkingState,
-): {output: string; state: ThinkingState} {
-  let output = '';
-  const buffer = state.buffer ? state.buffer + content : content;
-  const insideThinking = state.insideThinking;
-
-  while (true) {
-    const marker = insideThinking ? THINK_CLOSE : THINK_OPEN;
-    const markerIndex = buffer.indexOf(marker);
-
-    if (markerIndex >= 0) {
-      output += appendThinkingSegment(
-        buffer.slice(0, markerIndex),
-        insideThinking,
-      );
-      const remaining = buffer.slice(markerIndex + marker.length);
-      if (!remaining) {
-        return {output, state: {buffer: '', insideThinking: !insideThinking}};
-      }
-      return processThinkingContent(remaining, {
-        buffer: output,
-        insideThinking: !insideThinking,
-      });
-    }
-
-    const maxKeep = Math.min(buffer.length, marker.length - 1);
-    let keep = 0;
-    for (let i = maxKeep; i > 0; i--) {
-      if (marker.startsWith(buffer.slice(buffer.length - i))) {
-        keep = i;
-        break;
-      }
-    }
-
-    output += buffer.slice(0, buffer.length - keep);
-    return {
-      output,
-      state: {
-        buffer: buffer.slice(buffer.length - keep) || '',
-        insideThinking,
-      },
-    };
-  }
-}
+export type UsageCallback = (usage: {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  cached_tokens?: number;
+}) => void;
 
 export class GlmChatProvider implements vscode.LanguageModelChatProvider {
   private readonly _onDidChangeLanguageModelChatInformation =
@@ -127,7 +71,10 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
   readonly onDidChangeLanguageModelChatInformation =
     this._onDidChangeLanguageModelChatInformation.event;
 
-  constructor(private readonly authManager: AuthManager) {}
+  constructor(
+    private readonly authManager: AuthManager,
+    private readonly onUsage?: UsageCallback,
+  ) {}
 
   fireLanguageModelChatInformationChange(): void {
     this._onDidChangeLanguageModelChatInformation.fire();
@@ -159,7 +106,7 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
     return TYPED_MODELS.map(model => ({
       ...model,
       __glmApiKey: apiKey,
-    }));
+    })) as unknown as vscode.LanguageModelChatInformation[];
   }
 
   async provideLanguageModelChatResponse(
@@ -195,14 +142,31 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
     }
   }
 
-  private resolveThinking(): {type: 'enabled' | 'disabled'} | undefined {
+  private resolveThinking(
+    modelId: string,
+    options?: ModelConfigurationOptions,
+  ): Record<string, unknown> | undefined {
+    const def = GLM_MODEL_DEFINITIONS.find(m => m.id === modelId);
+    const canDisable = def?.thinkingSupport === 'on-off';
+
+    if (options) {
+      const configuredMode =
+        options.modelConfiguration?.thinkingMode ?? options.configuration?.thinkingMode;
+      if (configuredMode === 'enabled') {
+        return {type: 'enabled', clear_thinking: false};
+      }
+      if (configuredMode === 'disabled' && canDisable) {
+        return {type: 'disabled'};
+      }
+    }
+
     const config = vscode.workspace
       .getConfiguration('glm-chat-provider')
       .get<string>('defaultThinkingMode', 'auto');
     if (config === 'enabled') {
-      return {type: 'enabled'};
+      return {type: 'enabled', clear_thinking: false};
     }
-    if (config === 'disabled') {
+    if (config === 'disabled' && canDisable) {
       return {type: 'disabled'};
     }
     return undefined;
@@ -217,15 +181,20 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
     token: vscode.CancellationToken,
   ): Promise<void> {
     const toolCallBuilders = new Map<number, ToolCallBuilder>();
-    let thinkingState: ThinkingState = {buffer: '', insideThinking: false};
+
+    const modelConfig = options as ModelConfigurationOptions;
+    const temperature = getConfiguredTemperature(modelConfig);
+    const thinking = this.resolveThinking(model.id, modelConfig);
 
     const stream = client.streamChat(
       model.id,
-      this.convertMessages(messages),
+      convertMessages(messages),
       {
         maxTokens: options.modelOptions?.maxTokens as number | undefined,
-        tools: this.convertTools(options.tools),
-        thinking: this.resolveThinking(),
+        tools: convertTools(options.tools),
+        temperature,
+        thinking,
+        onUsage: this.onUsage,
       },
       token,
     );
@@ -236,11 +205,7 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
       }
 
       for (const choice of chunk.choices) {
-        thinkingState = this.reportTextDelta(
-          choice.delta.content,
-          thinkingState,
-          progress,
-        );
+        this.reportDelta(choice.delta, progress);
         this.collectToolCalls(choice.delta.tool_calls, toolCallBuilders);
         if (choice.finish_reason === 'tool_calls') {
           this.reportToolCalls(progress, toolCallBuilders);
@@ -251,20 +216,23 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
     this.reportToolCalls(progress, toolCallBuilders);
   }
 
-  private reportTextDelta(
-    content: string | null | undefined,
-    state: ThinkingState,
+  private reportDelta(
+    delta: ChatCompletionChunk.Choice.Delta,
     progress: vscode.Progress<vscode.LanguageModelResponsePart>,
-  ): ThinkingState {
-    if (!content) {
-      return state;
+  ): void {
+    const deltaAny = delta as Record<string, unknown>;
+
+    const reasoningContent = deltaAny.reasoning_content;
+    if (typeof reasoningContent === 'string' && reasoningContent) {
+      const thinkingPart = createThinkingPart(reasoningContent);
+      if (thinkingPart) {
+        progress.report(thinkingPart);
+      }
     }
 
-    const result = processThinkingContent(content, state);
-    if (result.output) {
-      progress.report(new vscode.LanguageModelTextPart(result.output));
+    if (delta.content) {
+      progress.report(new vscode.LanguageModelTextPart(delta.content));
     }
-    return result.state;
   }
 
   private collectToolCalls(
@@ -361,102 +329,5 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
       }
     }
     return Promise.resolve(Math.ceil(totalChars / 4));
-  }
-
-  private convertMessages(
-    messages: readonly vscode.LanguageModelChatRequestMessage[],
-  ): GlmMessage[] {
-    return messages.map(message => this.toGlmMessage(message));
-  }
-
-  private toGlmMessage(
-    message: vscode.LanguageModelChatRequestMessage,
-  ): GlmMessage {
-    const accumulated = message.content.reduce<MessageAccumulator>(
-      (state, part) =>
-        match(part)
-          .with(P.instanceOf(vscode.LanguageModelTextPart), value => ({
-            ...state,
-            text: state.text + value.value,
-          }))
-          .with(P.instanceOf(vscode.LanguageModelToolCallPart), value => ({
-            ...state,
-            toolCalls: [
-              ...state.toolCalls,
-              {
-                id: value.callId,
-                type: 'function' as const,
-                function: {
-                  name: value.name,
-                  arguments: JSON.stringify(value.input),
-                },
-              },
-            ],
-          }))
-          .with(P.instanceOf(vscode.LanguageModelToolResultPart), value => ({
-            ...state,
-            toolResult: {
-              callId: value.callId,
-              content:
-                typeof value.content === 'string'
-                  ? value.content
-                  : JSON.stringify(value.content),
-            },
-          }))
-          .otherwise(() => state),
-      {
-        text: '',
-        toolCalls: [],
-      },
-    );
-
-    if (accumulated.toolResult) {
-      return {
-        role: 'tool',
-        content: accumulated.toolResult.content,
-        tool_call_id: accumulated.toolResult.callId,
-      };
-    }
-
-    if (accumulated.toolCalls.length > 0) {
-      return {
-        role: 'assistant',
-        content: accumulated.text,
-        tool_calls: accumulated.toolCalls,
-      };
-    }
-
-    return {
-      role: this.convertRole(message.role),
-      content: accumulated.text,
-      name: message.name,
-    };
-  }
-
-  private convertRole(
-    role: vscode.LanguageModelChatMessageRole,
-  ): 'system' | 'user' | 'assistant' {
-    return match(role)
-      .with(
-        vscode.LanguageModelChatMessageRole.Assistant,
-        () => 'assistant' as const,
-      )
-      .with(vscode.LanguageModelChatMessageRole.User, () => 'user' as const)
-      .otherwise(() => 'system' as const);
-  }
-
-  private convertTools(
-    tools?: readonly vscode.LanguageModelChatTool[],
-  ): GlmTool[] | undefined {
-    return tools?.length
-      ? tools.map(tool => ({
-          type: 'function',
-          function: {
-            name: tool.name,
-            description: tool.description,
-            parameters: (tool.inputSchema ?? {}) as Record<string, unknown>,
-          },
-        }))
-      : undefined;
   }
 }

@@ -2,11 +2,6 @@
 
 Z.AI GLM models as a VS Code Language Model Chat Provider for the Coding Plan.
 
-## Requirements
-
-- VS Code **1.116.0** or newer
-- A valid Z.AI API key
-
 ### Text Models
 
 | Model | Context | Output | Tool Calling |

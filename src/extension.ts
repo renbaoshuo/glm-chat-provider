@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import {match} from 'ts-pattern';
 import {GlmApiClient, GlmApiError} from './api';
 import {AuthManager} from './auth';
-import {GlmChatProvider} from './provider';
+import {GlmChatProvider, type UsageCallback} from './provider';
 
 async function setApiKey(
   authManager: AuthManager,
@@ -98,9 +98,79 @@ async function setThinkingEffort(): Promise<void> {
   );
 }
 
+async function setTemperature(): Promise<void> {
+  const presets = [
+    {key: 'balanced', label: 'Balanced', value: 0.7, description: 'Default for most tasks'},
+    {
+      key: 'precise',
+      label: 'Precise',
+      value: 0.2,
+      description: 'Coding / Math (deterministic)',
+    },
+    {key: 'creative', label: 'Creative', value: 0.9, description: 'Writing / Brainstorming'},
+    {key: 'max', label: 'Max', value: 1.0, description: 'Maximum (most random)'},
+  ];
+
+  const selection = await vscode.window.showQuickPick(
+    [
+      ...presets.map(p => ({
+        label: p.label,
+        description: `${p.value} — ${p.description}`,
+        value: p.value,
+      })),
+      {label: 'Custom', description: 'Enter your own value (0.0 - 1.0)', value: undefined},
+    ],
+    {placeHolder: 'Select temperature for GLM models'},
+  );
+
+  if (!selection) return;
+
+  let value: number;
+  if (selection.value === undefined) {
+    const input = await vscode.window.showInputBox({
+      prompt: 'Enter temperature value (0.0 - 1.0)',
+      validateInput: (text) => {
+        const parsed = Number.parseFloat(text);
+        if (Number.isNaN(parsed) || parsed < 0 || parsed > 1) {
+          return 'Value must be a number between 0.0 and 1.0';
+        }
+        return undefined;
+      },
+    });
+    if (!input) return;
+    value = Number.parseFloat(input);
+  } else {
+    value = selection.value;
+  }
+
+  await vscode.workspace.getConfiguration('glm-chat-provider').update('temperature', value, true);
+  vscode.window.showInformationMessage(`GLM temperature set to ${value}`);
+}
+
 export function activate(context: vscode.ExtensionContext): void {
   const authManager = new AuthManager(context.secrets);
-  const provider = new GlmChatProvider(authManager);
+
+  let requestCount = 0;
+  const usageStatusBarItem = vscode.window.createStatusBarItem(
+    vscode.StatusBarAlignment.Right,
+    100,
+  );
+  usageStatusBarItem.text = 'GLM: $(database) 0 req';
+  usageStatusBarItem.tooltip =
+    'Requests this session. Resets every 5h. Click to manage.';
+  usageStatusBarItem.command = 'glm-chat-provider.manage';
+
+  const onUsage: UsageCallback = (_usage) => {
+    requestCount += 1;
+    usageStatusBarItem.text = `GLM: $(database) ${requestCount} req`;
+    usageStatusBarItem.tooltip = [
+      `Requests this session: ${requestCount}`,
+      'Click to manage provider',
+    ].join('\n');
+    usageStatusBarItem.show();
+  };
+
+  const provider = new GlmChatProvider(authManager, onUsage);
 
   const manageActions: Record<string, () => Promise<void>> = {
     'Set API Key': () => setApiKey(authManager, provider),
@@ -109,6 +179,7 @@ export function activate(context: vscode.ExtensionContext): void {
   };
 
   context.subscriptions.push(
+    usageStatusBarItem,
     vscode.lm.registerLanguageModelChatProvider('zai', provider),
     vscode.commands.registerCommand('glm-chat-provider.setApiKey', async () => {
       await setApiKey(authManager, provider);
@@ -136,6 +207,12 @@ export function activate(context: vscode.ExtensionContext): void {
       'glm-chat-provider.setThinkingEffort',
       async () => {
         await setThinkingEffort();
+      },
+    ),
+    vscode.commands.registerCommand(
+      'glm-chat-provider.setTemperature',
+      async () => {
+        await setTemperature();
       },
     ),
   );

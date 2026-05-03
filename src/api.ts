@@ -43,7 +43,8 @@ export interface ChatOptions {
   maxTokens?: number;
   tools?: GlmTool[];
   stop?: string[];
-  thinking?: {type: 'enabled' | 'disabled'};
+  thinking?: Record<string, unknown>;
+  onUsage?: (usage: {prompt_tokens: number; completion_tokens: number; total_tokens: number; cached_tokens?: number}) => void;
 }
 
 export class GlmApiError extends Error {
@@ -57,11 +58,6 @@ export class GlmApiError extends Error {
   }
 }
 
-/**
- * openai/undici send header values as ByteString; code points must be 0-255.
- * Invisible or wrong-script characters pasted into an API key cause:
- * "Cannot convert argument to a ByteString because the character at index …".
- */
 function prepareApiKeyForOpenAIClient(apiKey: string): string {
   const cleaned = apiKey.replace(/[\u200B-\u200D\ufeff\u00A0]/g, '').trim();
   let utf16Index = 0;
@@ -181,8 +177,11 @@ export class GlmApiClient {
       model,
       messages: this.toOpenAiMessages(messages),
       stream: true,
-      temperature: options?.temperature ?? 0.7,
+      stream_options: {include_usage: true},
     };
+    if (options?.temperature !== undefined) {
+      params.temperature = options.temperature;
+    }
     this.applyOptionalParams(params, options);
     return params;
   }
@@ -196,8 +195,10 @@ export class GlmApiClient {
       model,
       messages: this.toOpenAiMessages(messages),
       stream: false,
-      temperature: options?.temperature ?? 0.7,
     };
+    if (options?.temperature !== undefined) {
+      params.temperature = options.temperature;
+    }
     this.applyOptionalParams(params, options);
     return params;
   }
@@ -246,6 +247,16 @@ export class GlmApiClient {
         if (cancellationToken?.isCancellationRequested) {
           return;
         }
+
+        if (chunk.usage && options?.onUsage) {
+          options.onUsage({
+            prompt_tokens: chunk.usage.prompt_tokens,
+            completion_tokens: chunk.usage.completion_tokens,
+            total_tokens: chunk.usage.total_tokens,
+            cached_tokens: (chunk.usage as {prompt_tokens_details?: {cached_tokens?: number}}).prompt_tokens_details?.cached_tokens,
+          });
+        }
+
         yield chunk;
       }
     } catch (error) {
