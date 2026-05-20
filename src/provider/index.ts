@@ -1,12 +1,12 @@
 import * as vscode from 'vscode';
-import {match} from 'ts-pattern';
+import { match } from 'ts-pattern';
 import {
   GlmApiClient,
   GlmApiError,
   type GlmTool,
 } from '../api';
-import type {ChatCompletionChunk} from 'openai/resources/chat/completions/completions';
-import type {AuthManager} from '../auth';
+import type { ChatCompletionChunk } from 'openai/resources/chat/completions/completions';
+import type { AuthManager } from '../auth';
 import {
   GLM_MODEL_DEFINITIONS,
   GLM_MODELS,
@@ -15,10 +15,10 @@ import {
   type ModelConfigurationOptions,
   type ModelPickerChatInformation,
 } from '../models';
-export {GLM_MODELS};
-import {createThinkingPart} from './thinking';
-import {convertMessages, convertTools, parseToolArguments, type ToolCallBuilder} from './convert';
-import {getConfiguredTemperature} from './temperature';
+export { GLM_MODELS };
+import { createThinkingPart } from './thinking';
+import { convertMessages, convertTools, parseToolArguments, type ToolCallBuilder } from './convert';
+import { getConfiguredTemperature } from './temperature';
 
 type ModelWithApiKey = vscode.LanguageModelChatInformation & {
   __glmApiKey?: string;
@@ -48,7 +48,7 @@ function toChatInfo(m: GlmModelDefinition): ModelPickerChatInformation {
       imageInput: m.capabilities.imageInput,
     },
     ...(m.capabilities.thinking
-      ? {configurationSchema: getModelConfigurationSchema(m.thinkingSupport)}
+      ? { configurationSchema: getModelConfigurationSchema(m.thinkingSupport) }
       : {}),
   };
 }
@@ -74,7 +74,7 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
   constructor(
     private readonly authManager: AuthManager,
     private readonly onUsage?: UsageCallback,
-  ) {}
+  ) { }
 
   fireLanguageModelChatInformationChange(): void {
     this._onDidChangeLanguageModelChatInformation.fire();
@@ -153,10 +153,13 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
       const configuredMode =
         options.modelConfiguration?.thinkingMode ?? options.configuration?.thinkingMode;
       if (configuredMode === 'enabled') {
-        return {type: 'enabled', clear_thinking: false};
+        // For GLM 5.1+/5/4.7 series, thinking is enabled by default.
+        // Sending clear_thinking alongside type: 'enabled' causes a validation
+        // error on newer models. Only send {type: 'enabled'} without extra fields.
+        return { type: 'enabled' };
       }
       if (configuredMode === 'disabled' && canDisable) {
-        return {type: 'disabled'};
+        return { type: 'disabled' };
       }
     }
 
@@ -164,10 +167,10 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
       .getConfiguration('glm-chat-provider')
       .get<string>('defaultThinkingMode', 'auto');
     if (config === 'enabled') {
-      return {type: 'enabled', clear_thinking: false};
+      return { type: 'enabled' };
     }
     if (config === 'disabled' && canDisable) {
-      return {type: 'disabled'};
+      return { type: 'disabled' };
     }
     return undefined;
   }
